@@ -5,13 +5,22 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from vllm.outputs import CompletionOutput, RequestOutput
+# from vllm.outputs import CompletionOutput, RequestOutput
+# for TFB:
+from vllm.outputs import (
+    CompletionOutputWithUncertainty as CompletionOutput,
+    RequestOutputWithUncertainty as RequestOutput,
+)
 from vllm.sampling_params import RequestOutputKind
 from vllm.transformers_utils.tokenizer import AnyTokenizer
 from vllm.transformers_utils.tokenizer_group import BaseTokenizerGroup
-from vllm.v1.engine import EngineCoreOutput, EngineCoreRequest, FinishReason
+from vllm.v1.engine import (
+    EngineCoreOutputWithUncertainty as EngineCoreOutput, 
+    EngineCoreRequest, FinishReason
+)
 from vllm.v1.engine.detokenizer import IncrementalDetokenizer
 from vllm.v1.engine.logprobs import LogprobsProcessor
+from vllm.v1.engine.uncertainties import UncertaintiesProcessor # for TFB.
 from vllm.v1.engine.parallel_sampling import ParentRequest
 from vllm.v1.metrics.stats import (IterationStats, LoRARequestStates,
                                    RequestStateStats)
@@ -36,6 +45,7 @@ class RequestState:
         prompt: Optional[str],
         prompt_token_ids: list[int],
         logprobs_processor: LogprobsProcessor,
+        uncertainties_processor: UncertaintiesProcessor, # for TFB.
         detokenizer: IncrementalDetokenizer,
         max_tokens_param: Optional[int],
         arrival_time: float,
@@ -51,6 +61,7 @@ class RequestState:
         self.prompt_token_ids = prompt_token_ids
         self.prompt_len = len(prompt_token_ids)
         self.logprobs_processor = logprobs_processor
+        self.uncertainties_processor = uncertainties_processor # for TFB.
         self.detokenizer = detokenizer
         self.max_tokens_param = max_tokens_param
         self.is_prefilling = True
@@ -84,6 +95,10 @@ class RequestState:
                 tokenizer=tokenizer,
                 request=request,
             ),
+            uncertainties_processor=UncertaintiesProcessor.from_new_request(
+                tokenizer=tokenizer,
+                request=request,
+            ), # for TFB.
             detokenizer=IncrementalDetokenizer.from_new_request(
                 tokenizer=tokenizer,
                 request=request,
@@ -166,12 +181,19 @@ class RequestState:
         logprobs = self.logprobs_processor.logprobs
         if delta and logprobs:
             logprobs = logprobs[-len(token_ids):]
+        
+        # TFB uncertainties
+        # TODO: might need multiple uncertainties
+        uncertainties = self.uncertainties_processor.uncertainties
+        if delta and uncertainties:
+            uncertainties = uncertainties[-len(token_ids):]
 
         return CompletionOutput(
             index=self.request_index,
             text=text,
             token_ids=token_ids,
             logprobs=logprobs,
+            uncertainties=uncertainties, # for TFB.
             cumulative_logprob=self.logprobs_processor.cumulative_logprob,
             finish_reason=str(finish_reason) if finished else None,
             stop_reason=stop_reason if finished else None)
@@ -309,6 +331,7 @@ class OutputProcessor:
             # 3) Compute sample and prompt logprobs for request,
             #    if required.
             req_state.logprobs_processor.update_from_output(engine_core_output)
+            req_state.uncertainties_processor.update_from_output(engine_core_output) # for TFB.
 
             # 4) Create and handle RequestOutput objects.
             if request_output := req_state.make_request_output(

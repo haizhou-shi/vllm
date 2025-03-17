@@ -21,8 +21,10 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.utils import (get_open_zmq_inproc_path, get_open_zmq_ipc_path,
                         kill_process_tree, make_zmq_socket)
-from vllm.v1.engine import (EngineCoreOutputs, EngineCoreRequest,
-                            EngineCoreRequestType, UtilityOutput)
+from vllm.v1.engine import (
+    EngineCoreOutputsWithUncertainty as EngineCoreOutputs, 
+    EngineCoreRequest, EngineCoreRequestType, UtilityOutput
+)
 from vllm.v1.engine.core import EngineCore, EngineCoreProc
 from vllm.v1.executor.abstract import Executor
 from vllm.v1.serial_utils import MsgpackDecoder, MsgpackEncoder

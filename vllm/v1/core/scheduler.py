@@ -15,8 +15,12 @@ from vllm.v1.core.encoder_cache_manager import (EncoderCacheManager,
 from vllm.v1.core.kv_cache_manager import KVCacheManager
 from vllm.v1.core.scheduler_output import (CachedRequestData, NewRequestData,
                                            SchedulerOutput)
-from vllm.v1.engine import (EngineCoreEventType, EngineCoreOutput,
-                            EngineCoreOutputs)
+# from vllm.v1.engine import (EngineCoreEventType, EngineCoreOutput,
+#                             EngineCoreOutputs)
+from vllm.v1.engine import (
+    EngineCoreOutputWithUncertainty as EngineCoreOutput,
+    EngineCoreOutputsWithUncertainty as EngineCoreOutputs,
+    EngineCoreEventType)
 from vllm.v1.metrics.stats import SchedulerStats
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import Request, RequestStatus
@@ -529,11 +533,15 @@ class Scheduler:
         scheduler_output: SchedulerOutput,
         model_runner_output: ModelRunnerOutput,
     ) -> EngineCoreOutputs:
+        # print(model_runner_output.uncertainties)
         sampled_token_ids = model_runner_output.sampled_token_ids
         spec_token_ids = model_runner_output.spec_token_ids
         logprobs = model_runner_output.logprobs
         prompt_logprobs_dict = model_runner_output.prompt_logprobs_dict
         num_scheduled_tokens = scheduler_output.num_scheduled_tokens
+
+        # TFB uncertainty estimatioin
+        uncertainties = model_runner_output.uncertainties
 
         new_running: list[Request] = []
         outputs: list[EngineCoreOutput] = []
@@ -595,6 +603,9 @@ class Scheduler:
             new_logprobs = None
             new_token_ids: list[int] = []
 
+            # follow the style of the new_logprobs
+            new_uncertainties = None
+
             if request.num_computed_tokens >= request.num_tokens:
                 for output_token_id in generated_token_ids:
                     request.append_output_token_ids(output_token_id)
@@ -613,6 +624,12 @@ class Scheduler:
                     # NOTE: once we support N tokens per step (spec decode),
                     # the outer lists can be of length > 1.
                     new_logprobs = logprobs.slice(req_index, req_index + 1)
+                
+                # Extract uncertainties if needed.
+                if True: # TODO: add the return_uncertainties flag in sampling params.
+                    assert uncertainties is not None
+                    new_uncertainties = uncertainties.slice(req_index, req_index + 1)
+
 
             if new_token_ids and request.use_structured_output:
                 # NOTE: structured_output_request
@@ -634,6 +651,7 @@ class Scheduler:
                         new_token_ids=new_token_ids,
                         finish_reason=request.get_finished_reason(),
                         new_logprobs=new_logprobs,
+                        new_uncertainties=new_uncertainties,
                         new_prompt_logprobs_tensors=prompt_logprobs_tensors,
                         stop_reason=request.stop_reason,
                         events=request.take_events()))
@@ -641,7 +659,7 @@ class Scheduler:
             self.scheduled_req_ids.remove(request.request_id)
             if not stopped:
                 new_running.append(request)
-
+        # print(outputs[0])
         self.running = new_running
         return EngineCoreOutputs(
             outputs=outputs,

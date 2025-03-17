@@ -11,7 +11,7 @@ from vllm.multimodal import MultiModalKwargs
 from vllm.multimodal.inputs import PlaceholderRange
 from vllm.sampling_params import SamplingParams
 from vllm.v1.metrics.stats import SchedulerStats
-from vllm.v1.outputs import LogprobsLists, LogprobsTensors
+from vllm.v1.outputs import LogprobsLists, LogprobsTensors, UncertaintyLists
 
 # These are possible values of RequestOutput.finish_reason,
 # so form part of the external API.
@@ -106,6 +106,27 @@ class EngineCoreOutput(
     def finished(self) -> bool:
         return self.finish_reason is not None
 
+# TFB uncertainty estimation
+class EngineCoreOutputWithUncertainty(
+        msgspec.Struct,
+        array_like=True,  # type: ignore[call-arg]
+        omit_defaults=True,  # type: ignore[call-arg]
+        gc=False):  # type: ignore[call-arg]
+
+    request_id: str
+    new_token_ids: list[int]
+
+    new_logprobs: Optional[LogprobsLists] = None
+    new_uncertainties: Optional[UncertaintyLists] = None
+    new_prompt_logprobs_tensors: Optional[LogprobsTensors] = None
+
+    finish_reason: Optional[FinishReason] = None
+    stop_reason: Union[int, str, None] = None
+    events: Optional[list[EngineCoreEvent]] = None
+
+    @property
+    def finished(self) -> bool:
+        return self.finish_reason is not None    
 
 class UtilityOutput(
         msgspec.Struct,
@@ -138,6 +159,14 @@ class EngineCoreOutputs(
     def __post_init__(self):
         if self.timestamp == 0.0:
             self.timestamp = time.monotonic()
+
+class EngineCoreOutputsWithUncertainty(
+        EngineCoreOutputs,
+        array_like=True,  # type: ignore[call-arg]
+        omit_defaults=True,  # type: ignore[call-arg]
+        gc=False):  # type: ignore[call-arg]
+
+    outputs: list[EngineCoreOutputWithUncertainty] = []
 
 
 class EngineCoreRequestType(enum.Enum):

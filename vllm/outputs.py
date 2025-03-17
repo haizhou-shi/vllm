@@ -17,6 +17,23 @@ from vllm.sequence import (PromptLogprobs, RequestMetrics, SampleLogprobs,
 
 
 @dataclass
+class Uncertainty:
+    """Infos for supporting OpenAI compatible logprobs and token ranks.
+
+    Attributes:
+        logprob: The logprob of chosen token
+        rank: The vocab rank of chosen token (>=1)
+        decoded_token: The decoded chosen token index
+    """
+    total_uncertainty: float
+    aleatoric_uncertainty: float
+    epistemic_uncertainty: float
+    decoded_token: Optional[str] = None
+
+# {token_id -> uncertainty} for each sequence group.
+SampleUncertainties = list[dict[int, Uncertainty]]
+
+@dataclass
 class CompletionOutput:
     """The output data of one completion output of a request.
 
@@ -53,6 +70,40 @@ class CompletionOutput:
                 f"token_ids={self.token_ids}, "
                 f"cumulative_logprob={self.cumulative_logprob}, "
                 f"logprobs={self.logprobs}, "
+                f"finish_reason={self.finish_reason}, "
+                f"stop_reason={self.stop_reason})")
+
+@dataclass
+class CompletionOutputWithUncertainty(CompletionOutput):
+    """The output data of one completion output of a request.
+
+    Args:
+        index: The index of the output in the request.
+        text: The generated output text.
+        token_ids: The token IDs of the generated output text.
+        cumulative_logprob: The cumulative log probability of the generated
+            output text.
+        logprobs: The log probabilities of the top probability words at each
+            position if the logprobs are requested.
+        finish_reason: The reason why the sequence is finished.
+        stop_reason: The stop string or token id that caused the completion
+            to stop, None if the completion finished for some other reason
+            including encountering the EOS token.
+        lora_request: The LoRA request that was used to generate the output.
+
+        ### Uncertainty
+        uncertainties: The uncetainties of the given position regardless of 
+            the decoded token id.
+    """
+    uncertainties: Optional[SampleUncertainties] = None
+
+    def __repr__(self) -> str:
+        return (f"CompletionOutput(index={self.index}, "
+                f"text={self.text!r}, "
+                f"token_ids={self.token_ids}, "
+                f"cumulative_logprob={self.cumulative_logprob}, "
+                f"logprobs={self.logprobs}, "
+                f"uncertainties={self.uncertainties}, "
                 f"finish_reason={self.finish_reason}, "
                 f"stop_reason={self.stop_reason})")
 
@@ -323,6 +374,92 @@ class RequestOutput:
                 f"lora_request={self.lora_request}, "
                 f"num_cached_tokens={self.num_cached_tokens}, "
                 f"multi_modal_placeholders={self.multi_modal_placeholders})")
+
+class RequestOutputWithUncertainty(RequestOutput):
+    """The output data of a completion request to the LLM.
+
+    Args:
+        request_id: The unique ID of the request.
+        prompt: The prompt string of the request.
+                For encoder/decoder models, this is the
+                decoder input prompt.
+        prompt_token_ids: The token IDs of the prompt.
+                          For encoder/decoder models, this is the
+                          decoder input prompt token ids.
+        prompt_logprobs: The log probabilities to return per prompt token.
+        outputs: The output sequences of the request.
+        finished: Whether the whole request is finished.
+        metrics: Metrics associated with the request.
+        lora_request: The LoRA request that was used to generate the output.
+        encoder_prompt: The encoder prompt string of the request.
+                        None if decoder-only.
+        encoder_prompt_token_ids: The token IDs of the encoder prompt.
+                                  None if decoder-only.
+        num_cached_tokens: The number of tokens with prefix cache hit.
+    """
+
+    def __init__(
+        self,
+        request_id: str,
+        prompt: Optional[str],
+        prompt_token_ids: Optional[list[int]],
+        prompt_logprobs: Optional[PromptLogprobs],
+        outputs: list[CompletionOutputWithUncertainty],
+        finished: bool,
+        metrics: Optional[RequestMetrics] = None,
+        lora_request: Optional[LoRARequest] = None,
+        encoder_prompt: Optional[str] = None,
+        encoder_prompt_token_ids: Optional[list[int]] = None,
+        num_cached_tokens: Optional[int] = None,
+        *,
+        multi_modal_placeholders: Optional[MultiModalPlaceholderDict] = None,
+    ) -> None:
+        self.request_id = request_id
+        self.prompt = prompt
+        self.prompt_token_ids = prompt_token_ids
+        self.multi_modal_placeholders = multi_modal_placeholders or {}
+        self.prompt_logprobs = prompt_logprobs
+        self.outputs = outputs
+        self.finished = finished
+        self.metrics = metrics
+        self.lora_request = lora_request
+        self.encoder_prompt = encoder_prompt
+        self.encoder_prompt_token_ids = encoder_prompt_token_ids
+        self.num_cached_tokens = num_cached_tokens
+
+    def add(self, next_output: "RequestOutputWithUncertainty") -> None:
+        """Merge subsequent RequestOutput into this one"""
+
+        self.finished |= next_output.finished
+
+        for next_completion in next_output.outputs:
+            for completion in self.outputs:
+                if completion.index == next_completion.index:
+                    # Merge outputs with same index
+                    completion.text += next_completion.text
+                    if not isinstance(completion.token_ids, MutableSequence):
+                        completion.token_ids = list(completion.token_ids)
+                    completion.token_ids.extend(next_completion.token_ids)
+                    if next_completion.logprobs:
+                        assert completion.logprobs is not None
+                        completion.logprobs.extend(next_completion.logprobs)
+                    if next_completion.uncertainties: # for TFB
+                        assert completion.uncertainties is not None
+                        completion.uncertainties.extend(next_completion.uncertainties)
+                    completion.cumulative_logprob = (
+                        next_completion.cumulative_logprob)
+                    completion.finish_reason = next_completion.finish_reason
+                    completion.stop_reason = next_completion.stop_reason
+                    break
+            else:
+                self.outputs.append(next_completion)
+
+    @classmethod
+    def from_seq_group(
+        cls, seq_group: SequenceGroup, use_cache: bool,
+        seq_id_to_seq_group: dict[str, SequenceGroupBase]
+    ) -> Optional["RequestOutputWithUncertainty"]:
+        raise NotImplementedError("from_seq_group is not implemented for RequestOutputWithUncertainty")
 
 
 _O = TypeVar("_O", default=PoolingOutput)

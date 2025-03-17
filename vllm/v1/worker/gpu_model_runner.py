@@ -32,8 +32,12 @@ from vllm.v1.core.encoder_cache_manager import compute_encoder_budget
 from vllm.v1.engine.mm_input_cache import MMInputCacheClient
 from vllm.v1.kv_cache_interface import (FullAttentionSpec, KVCacheConfig,
                                         KVCacheSpec)
-from vllm.v1.outputs import (EMPTY_MODEL_RUNNER_OUTPUT, LogprobsTensors,
-                             ModelRunnerOutput)
+# from vllm.v1.outputs import (EMPTY_MODEL_RUNNER_OUTPUT, LogprobsTensors,
+#                              ModelRunnerOutput)
+from vllm.v1.outputs import (
+    EMPTY_MODEL_RUNNER_OUTPUT_WITH_UNCERTAINTY as EMPTY_MODEL_RUNNER_OUTPUT, 
+    ModelRunnerOutputWithUncertainty as ModelRunnerOutput,
+    LogprobsTensors, UncertaintyLists)
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.rejection_sampler import INVALID_TOKEN_ID, RejectionSampler
 from vllm.v1.spec_decode.ngram_proposer import NgramProposer
@@ -993,6 +997,40 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 intermediate_tensors=intermediate_tensors,
                 inputs_embeds=inputs_embeds,
             )
+
+            # For TFB LLMs
+            # print("hidden state shape: ", hidden_states.shape)
+            if len(hidden_states.shape) == 3:
+                if hidden_states.shape[0] > 1:
+                    # indicating this is a TFB LLM and needs uncertainty
+                    # estimation. 
+                    # TODO: add the uncertainty estimation code. 
+                    def uncertainty(hidden_states):
+                        """Dummy Uncertainty Functions to be replaced."""
+                        import random
+                        return UncertaintyLists(
+                            uncertainty_token_ids=[[1208 for _ in range(hidden_states.shape[1])]],
+                            total_uncertainties=[[random.random() for _ in range(hidden_states.shape[1])]],
+                            aleatoric_uncertainties=[[random.random() for _ in range(hidden_states.shape[1])]],
+                            epistemic_uncertainties=[[random.random() for _ in range(hidden_states.shape[1])]],
+                        )
+                    uncertainties_lists = uncertainty(hidden_states)
+                    
+                    ##################### TODO: TFB LLM Uncertainty Estimation #####################
+
+
+
+
+
+
+
+                    ################################################################################
+
+
+                # use the default hidden states w/o sampling for kv_cache
+                # and generation.
+                hidden_states = hidden_states[0]
+
         if not get_pp_group().is_last_rank:
             # For mid-pipeline stages, return the hidden states.
             return hidden_states
@@ -1078,6 +1116,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             spec_token_ids=spec_token_ids,
             logprobs=logprobs_lists,
             prompt_logprobs_dict=prompt_logprobs_dict,
+            # append the uncertainty value to the output
+            uncertainties=uncertainties_lists, # TODO: add the uncertainty estimation code.
+            # uncertainties=None,
         )
 
     def generate_draft_token_ids(
@@ -1252,6 +1293,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     intermediate_tensors=intermediate_tensors,
                     inputs_embeds=inputs_embeds,
                 )
+                if len(hidden_states.shape) == 3:
+                    hidden_states = hidden_states[0]
 
         logit_indices = np.cumsum(num_scheduled_tokens) - 1
         return hidden_states[logit_indices]

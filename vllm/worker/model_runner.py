@@ -1748,6 +1748,15 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     **seqlen_agnostic_kwargs,
                     **model_kwargs,
                 )
+                
+                print("hidden state shape: ", hidden_or_intermediate_states.shape)
+                if len(hidden_or_intermediate_states.shape) == 3:
+                    # indicating this is a TFB LLM. 
+                    def uncertainty(hidden_or_intermediate_states):
+                        """Temp Uncertainty Function"""
+                        return torch.rand(1, device=hidden_or_intermediate_states.device)
+                    unc = uncertainty(hidden_or_intermediate_states)
+                    hidden_or_intermediate_states = hidden_or_intermediate_states.mean(0)
 
         if (self.observability_config is not None
                 and self.observability_config.collect_model_forward_time):
@@ -1799,6 +1808,8 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             logits=logits,
             sampling_metadata=model_input.sampling_metadata,
         )
+        # add output's uncertainty
+        output.uncertatinty = unc
         if (self.observability_config is not None
                 and self.observability_config.collect_model_forward_time
                 and output is not None):

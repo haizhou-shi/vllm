@@ -290,7 +290,7 @@ class repackage_wheel(build_ext):
             # Get the latest commit hash of the upstream main branch.
             resp_json = subprocess.check_output([
                 "curl", "-s",
-                "https://api.github.com/repos/vllm-project/vllm/commits/main"
+                "https://api.github.com/repos/haizhou-shi/vllm/commits/main" # by-pass the latest commit check.
             ]).decode("utf-8")
             upstream_main_commit = json.loads(resp_json)["sha"]
 

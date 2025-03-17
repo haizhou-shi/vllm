@@ -999,37 +999,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
             # For TFB LLMs
-            # print("hidden state shape: ", hidden_states.shape)
+            tfb_hidden_states = None
             if len(hidden_states.shape) == 3:
-                if hidden_states.shape[0] > 1:
-                    # indicating this is a TFB LLM and needs uncertainty
-                    # estimation. 
-                    # TODO: add the uncertainty estimation code. 
-                    def uncertainty(hidden_states):
-                        """Dummy Uncertainty Functions to be replaced."""
-                        import random
-                        return UncertaintyLists(
-                            uncertainty_token_ids=[[1208 for _ in range(hidden_states.shape[1])]],
-                            total_uncertainties=[[random.random() for _ in range(hidden_states.shape[1])]],
-                            aleatoric_uncertainties=[[random.random() for _ in range(hidden_states.shape[1])]],
-                            epistemic_uncertainties=[[random.random() for _ in range(hidden_states.shape[1])]],
-                        )
-                    uncertainties_lists = uncertainty(hidden_states)
-                    
-                    ##################### TODO: TFB LLM Uncertainty Estimation #####################
+                # save for the later use of uncertainty estimation
+                tfb_hidden_states = hidden_states
 
-
-
-
-
-
-
-                    ################################################################################
-
-
-                # use the default hidden states w/o sampling for kv_cache
-                # and generation.
-                hidden_states = hidden_states[0]
+                # use the default hidden states w/o sampling for kv_cache and generation.
+                hidden_states = tfb_hidden_states[0]
 
         if not get_pp_group().is_last_rank:
             # For mid-pipeline stages, return the hidden states.
@@ -1108,7 +1084,37 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         else:
             spec_token_ids = self.generate_draft_token_ids(
                 valid_sampled_token_ids)
+            
+        if tfb_hidden_states is None: 
+            # this indicates is a normal LLM generation, and we only needs 
+            # to have a dummy uncertainty estimation. 
+            uncertainties_lists = UncertaintyLists(
+                uncertainty_token_ids=[],
+                total_uncertainties=[],
+                aleatoric_uncertainties=[],
+                epistemic_uncertainties=[],
+            )
+        else:
+            # TODO: add the real uncertainty estimation code. 
+            # for now we utilize the logprobs' information for a 
+            # dummy uncertainty estimation, to show the shape matches.
+            import random
+            unc_hidden_states = tfb_hidden_states[:, :num_scheduled_tokens, :] # follow the logprob setting 
+            uncertainties_lists = UncertaintyLists(
+                uncertainty_token_ids=valid_sampled_token_ids,
+                total_uncertainties=[[random.random()] for _ in range(unc_hidden_states.shape[1])],
+                aleatoric_uncertainties=[[random.random()] for _ in range(unc_hidden_states.shape[1])],
+                epistemic_uncertainties=[[random.random()] for _ in range(unc_hidden_states.shape[1])],
+            )
+            ##################### TODO: TFB LLM Uncertainty Estimation #####################
+            # should use the `unc_hidden_states` to estimate the uncertainty.
 
+
+
+
+
+            ################################################################################
+            
         return ModelRunnerOutput(
             req_ids=self.input_batch.req_ids,
             req_id_to_index=self.input_batch.req_id_to_index,

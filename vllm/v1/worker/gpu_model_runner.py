@@ -45,6 +45,8 @@ from vllm.v1.utils import bind_kv_cache
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 
+from vllm.v1.worker.unc_evaluate import evaluate_uncertainty_all
+
 if TYPE_CHECKING:
     import xgrammar as xgr
 
@@ -1095,24 +1097,25 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 epistemic_uncertainties=[],
             )
         else:
-            # TODO: add the real uncertainty estimation code. 
-            # for now we utilize the logprobs' information for a 
-            # dummy uncertainty estimation, to show the shape matches.
-            import random
             unc_hidden_states = tfb_hidden_states[:, :num_scheduled_tokens, :] # follow the logprob setting 
+            
+            ##################### TFB LLM Uncertainty Estimation #####################
+            # should use the `unc_hidden_states` to estimate the uncertainty.
+            # reshape: [num_samples, num_tokens, hidden_size] -> [num_samples * num_tokens, hidden_size]
+            reshaped_hidden_states = unc_hidden_states.reshape(-1, unc_hidden_states.shape[-1])
+            # compute logits
+            reshaped_logits = self.model.compute_logits(reshaped_hidden_states, None)
+            # reshape back to origin
+            reshaped_logits = reshaped_logits.reshape(unc_hidden_states.shape[0], unc_hidden_states.shape[1], -1)
+
+            tu, au, eu = evaluate_uncertainty_all(reshaped_logits)
+
             uncertainties_lists = UncertaintyLists(
                 uncertainty_token_ids=valid_sampled_token_ids,
-                total_uncertainties=[[random.random()] for _ in range(unc_hidden_states.shape[1])],
-                aleatoric_uncertainties=[[random.random()] for _ in range(unc_hidden_states.shape[1])],
-                epistemic_uncertainties=[[random.random()] for _ in range(unc_hidden_states.shape[1])],
+                total_uncertainties=[[value] for value in tu],
+                aleatoric_uncertainties=[[value] for value in au],
+                epistemic_uncertainties=[[value] for value in eu],
             )
-            ##################### TODO: TFB LLM Uncertainty Estimation #####################
-            # should use the `unc_hidden_states` to estimate the uncertainty.
-
-
-
-
-
             ################################################################################
             
         return ModelRunnerOutput(

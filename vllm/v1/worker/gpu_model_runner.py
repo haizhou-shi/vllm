@@ -1108,13 +1108,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # reshape back to origin
             reshaped_logits = reshaped_logits.reshape(unc_hidden_states.shape[0], unc_hidden_states.shape[1], -1)
 
-            tu, au, eu = evaluate_uncertainty_all(reshaped_logits)
+            TUs, AUs, EUs = evaluate_uncertainty_all(reshaped_logits)
 
             uncertainties_lists = UncertaintyLists(
                 uncertainty_token_ids=valid_sampled_token_ids,
-                total_uncertainties=[[value] for value in tu],
-                aleatoric_uncertainties=[[value] for value in au],
-                epistemic_uncertainties=[[value] for value in eu],
+                total_uncertainties=[[value] for value in TUs],
+                aleatoric_uncertainties=[[value] for value in AUs],
+                epistemic_uncertainties=[[value] for value in EUs],
             )
             ################################################################################
             
@@ -1125,9 +1125,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             spec_token_ids=spec_token_ids,
             logprobs=logprobs_lists,
             prompt_logprobs_dict=prompt_logprobs_dict,
-            # append the uncertainty value to the output
-            uncertainties=uncertainties_lists, # TODO: add the uncertainty estimation code.
-            # uncertainties=None,
+            uncertainties=uncertainties_lists,
         )
 
     def generate_draft_token_ids(

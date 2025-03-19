@@ -15,7 +15,8 @@ def softmax_inplace(logits):
 @dataclass
 class SparseProbs:
     sparse_probs: torch.Tensor # shape: [n_samples, [seq_len, k]]
-    k: int # number of top logits to keep
+    remaining_vocab_sizes: torch.Tensor # [n_samples, seq_len]
+    remaining_probs: torch.Tensor # [n_samples, seq_len] 
     vocab_size: int
 
     @property
@@ -23,7 +24,7 @@ class SparseProbs:
         return self.sparse_probs.shape
     
     @classmethod
-    def from_dense_logits_top_p(cls, logits, p=0.95):
+    def from_dense_logits_top_p(cls, logits, p=0.9):
         """
         Convert dense logits tensor to sparse format containing only top-k values.
         
@@ -44,8 +45,12 @@ class SparseProbs:
         # Get the top-p logits and their indices
         # Here we add another slot (k+1) for storing the remaining logits value.
         # We don't care about the actual indices 
-        logits_values, logits_indices = [], []
+        # TODO:
+        #   The big for loop + while loop is not time-efficient.
+        #   How to further optimize this? 
+        logits_values, logits_indices, remaining_vocab_sizes, remaining_probs = [], [], [], []
         for i in range(seq_len):
+            # for one token, we use a shared k.
             k = 1000
             sampled_logits_i = logits[:, i, :]
             sum_logits_i = torch.sum(sampled_logits_i)
@@ -55,21 +60,25 @@ class SparseProbs:
                 logits_values_i, logits_indices_i = torch.topk(sampled_logits_i, k=k, dim=-1)  # shape: [n_samples, seq_len, k]
                 if torch.sum(logits_values_i) / sum_logits_i >= p:
                     # Average Logits Remaining. 
-                    # NOTE: here we cannot average the probs after 
-                    #   the softmax for the sake of memory efficiency.
-                    #   this will cause the under-estimation of the uncertainty,
-                    #   since exp() is convex.
-                    # NOTE: the larger the remaining mass of the logits, the more under-estimation
+                    # NOTE: 
+                    #   here we directly sum the remaining probs and put it to the last index.
+                    #   this will cause the under-estimation of the uncertainty.
+                    #   the larger the remaining mass of the logits, the more under-estimation
                     #   of the uncertainty.
-                    # TODO: better way to estimate.
-                    logits_remain_mean_i = (sampled_logits_i.sum(dim=-1) - logits_values_i.sum(dim=-1)) / (vocab_size - k)
+                    # NOTE: 
+                    #   we compensate for the under-estimation by adding the cross entropy p * log(K)
+                    #   to the final uncertainty, where K is the number of remaining logits.
+                    #   this is equivalent to assigning the mean of the probs to the rest of the indices.
+                    logits_remain_mean_i = (sampled_logits_i.sum(dim=-1, keepdims=True) - logits_values_i.sum(dim=-1, keepdims=True))
+                    remaining_vocab_sizes.append(torch.full_like(logits_remain_mean_i, vocab_size - k))
+                    remaining_probs.append(logits_remain_mean_i)
 
                     # append the mean of the remaining logits to the last index.
                     # the filld value is the log(vocab_size - k) + logits_remain_mean, 
                     # which is the log probability of the remaining logits.
                     # now the shape of logits_values is [n_samples, seq_len, vocab_size+1]
                     # and it can be directly used for uncertainty estimation.
-                    logits_values_i = torch.cat([logits_values_i, logits_remain_mean_i.unsqueeze(-1)], dim=-1)
+                    logits_values_i = torch.cat([logits_values_i, logits_remain_mean_i], dim=-1)
                     logits_indices_i = torch.cat([logits_indices_i, torch.full_like(logits_indices_i[:, :1], vocab_size, dtype=logits_indices_i.dtype)], dim=-1)
                     logits_values.append(logits_values_i)
                     logits_indices.append(logits_indices_i)
@@ -117,6 +126,11 @@ class SparseProbs:
             vocab_indices   # vocabulary dimension
         ], dim=0)
 
+        # Create the remaining vocab sizes tensor
+        # for uncertainty estimation compensation.
+        remaining_vocab_sizes = torch.cat(remaining_vocab_sizes, dim=1)
+        remaining_probs = torch.cat(remaining_probs, dim=1)
+        
         # Create sparse tensor
         sparse_logits = torch.sparse_coo_tensor(
             indices=indices,
@@ -128,7 +142,8 @@ class SparseProbs:
         return cls(
             sparse_probs=sparse_logits, 
             # logits_remain_mean=logits_remain_mean, 
-            k=k,
+            remaining_vocab_sizes=remaining_vocab_sizes,
+            remaining_probs=remaining_probs,
             vocab_size=vocab_size,
         )
     
@@ -184,7 +199,14 @@ class SparseProbs:
         """
         probs = self.softmax(mean=True)
         log_probs = self.log_softmax(mean=True)
-        return self.entropy(probs, log_probs)
+        entropy = self.entropy(probs, log_probs)
+
+        # p * log(K) compensation for the under-estimation of the uncertainty.
+        # NOTE: this is still under-estimation, but it's better than nothing. 
+        #    the two compensates are the same, as we have the same vocab size
+        #    for each sample.
+        compensate = torch.log(self.remaining_vocab_sizes.mean(dim=0)) * self.remaining_probs.mean(dim=0)
+        return entropy + compensate
 
     def aleatoric_uncertainty(self):
         """
@@ -193,7 +215,13 @@ class SparseProbs:
         probs = self.softmax(mean=False)
         log_probs = self.log_softmax(mean=False)
         entropy = torch.cat([self.entropy(prob, log_prob).unsqueeze(0) for prob, log_prob in zip(probs, log_probs)], dim=0).mean(dim=0)
-        return entropy
+
+        # p * log(K) compensation for the under-estimation of the uncertainty.
+        # NOTE: this is still under-estimation, but it's better than nothing.
+        #    the two compensates are the same, as we have the same vocab size
+        #    for each sample.
+        compensate = (torch.log(self.remaining_vocab_sizes) * self.remaining_probs).mean(dim=0)
+        return entropy + compensate
 
     def epistemic_uncertainty(self):
         """

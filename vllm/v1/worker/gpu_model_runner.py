@@ -1108,8 +1108,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # reshape back to origin
             reshaped_logits = reshaped_logits.reshape(unc_hidden_states.shape[0], unc_hidden_states.shape[1], -1)
 
-            # # lower-bound approximation of uncertainty estimation 
-            # TUs, AUs, EUs = SparseLogits.from_dense_tensor(reshaped_logits).evaluate_uncertainty_all()
+            # # approximation of uncertainty estimation 
+            # TUs, AUs, EUs = SparseProbs.from_dense_logits_top_p(reshaped_logits).evaluate_uncertainty_all()
 
             ###### Code you can use to compare the uncertainty estimation between full logits and sparse logits ######
             TUs, AUs, EUs = evaluate_uncertainty_all(reshaped_logits)
@@ -1123,6 +1123,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             print(f"Approximate Aleatoric Uncertainty (sparse logits): {app_AUs}")
             print(f"Epistemic Uncertainty (full logits): {EUs}")
             print(f"Approximate Epistemic Uncertainty (sparse logits): {app_EUs}")
+            print("========================================")
+
+            print("========================================")
+            print(f"Average Percentage Error of Total Uncertainty: {np.mean(np.abs((np.array(TUs) - np.array(app_TUs)) / np.array(TUs)) * 100):.2f}%")
+            print(f"Average Percentage Error of Aleatoric Uncertainty: {np.mean(np.abs((np.array(AUs) - np.array(app_AUs)) / np.array(AUs)) * 100):.2f}%")
+            print(f"Average Percentage Error of Epistemic Uncertainty: {np.mean(np.abs((np.array(EUs) - np.array(app_EUs)) / np.array(EUs)) * 100):.2f}%")
             print("========================================")
 
             uncertainties_lists = UncertaintyLists(

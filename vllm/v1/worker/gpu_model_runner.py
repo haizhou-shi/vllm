@@ -45,7 +45,7 @@ from vllm.v1.utils import bind_kv_cache
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 
-from vllm.v1.worker.unc_evaluate import evaluate_uncertainty_all, SparseLogits
+from vllm.v1.worker.unc_evaluate import evaluate_uncertainty_all, SparseProbs
 
 if TYPE_CHECKING:
     import xgrammar as xgr
@@ -1108,21 +1108,22 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # reshape back to origin
             reshaped_logits = reshaped_logits.reshape(unc_hidden_states.shape[0], unc_hidden_states.shape[1], -1)
 
-            # lower-bound approximation of uncertainty estimation 
-            TUs, AUs, EUs = SparseLogits.from_dense_tensor(reshaped_logits).evaluate_uncertainty_all()
+            # # lower-bound approximation of uncertainty estimation 
+            # TUs, AUs, EUs = SparseLogits.from_dense_tensor(reshaped_logits).evaluate_uncertainty_all()
 
-            # ###### Code you can use to compare the uncertainty estimation between full logits and sparse logits ######
-            # TUs, AUs, EUs = evaluate_uncertainty_all(reshaped_logits)
+            ###### Code you can use to compare the uncertainty estimation between full logits and sparse logits ######
+            TUs, AUs, EUs = evaluate_uncertainty_all(reshaped_logits)
             # app_TUs, app_AUs, app_EUs = SparseLogits.from_dense_tensor(reshaped_logits).evaluate_uncertainty_all()
+            app_TUs, app_AUs, app_EUs = SparseProbs.from_dense_logits_top_p(reshaped_logits).evaluate_uncertainty_all()
 
-            # print("========================================")
-            # print(f"Total Uncertainty (full logits): {TUs}")
-            # print(f"Approximate Total Uncertainty (sparse logits): {app_TUs}")
-            # print(f"Aleatoric Uncertainty (full logits): {AUs}")
-            # print(f"Approximate Aleatoric Uncertainty (sparse logits): {app_AUs}")
-            # print(f"Epistemic Uncertainty (full logits): {EUs}")
-            # print(f"Approximate Epistemic Uncertainty (sparse logits): {app_EUs}")
-            # print("========================================")
+            print("========================================")
+            print(f"Total Uncertainty (full logits): {TUs}")
+            print(f"Approximate Total Uncertainty (sparse logits): {app_TUs}")
+            print(f"Aleatoric Uncertainty (full logits): {AUs}")
+            print(f"Approximate Aleatoric Uncertainty (sparse logits): {app_AUs}")
+            print(f"Epistemic Uncertainty (full logits): {EUs}")
+            print(f"Approximate Epistemic Uncertainty (sparse logits): {app_EUs}")
+            print("========================================")
 
             uncertainties_lists = UncertaintyLists(
                 uncertainty_token_ids=valid_sampled_token_ids,

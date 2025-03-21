@@ -523,7 +523,7 @@ def total_uncertainty(logits):
     """
     H(E_{\theta}[P(y|x, \theta)]), total uncertainty evaluation for the logits.
     """
-    mean_logits = torch.log(F.softmax(logits, dim=-1).mean(dim=0) + 1e-8) # shape: [seq_len, vocab_size]
+    mean_logits = torch.log(F.softmax(logits, dim=-1).mean(dim=0)) # shape: [seq_len, vocab_size]
     token_entropy = entropy(mean_logits) # shape: [seq_len]
     return token_entropy # shape: [seq_len]
 
@@ -550,3 +550,39 @@ def evaluate_uncertainty_all(logits):
     au = aleatoric_uncertainty(logits)
     eu = tu - au
     return tu.cpu().tolist(), au.cpu().tolist(), eu.cpu().tolist()
+
+def evaluate_uncertainty_all_mem_efficient(logits):
+    """
+    Uncertainty evaluation for the logits.
+    Args:
+        logits: [n_samples, seq_len, vocab_size]
+    Returns: uncertainties of the shape: [seq_len]
+        TU: total uncertainty, H(E_{\theta}[P(y|x, \theta)]):
+        AU: aleotoric uncertainty, E_{\theta}[H(P(y|x, \theta))]: 
+        EU: epistemic uncertainty, TU - AU
+    """
+    probs = softmax_inplace(logits)
+    log_probs_buffer = torch.zeros_like(probs[:, 0, :])
+
+    tus, aus, eus = [], [], []
+    for i in range(probs.size(1)):
+        # the following operations are all in-place,
+        # to save memory.
+        log_probs_buffer.copy_(probs[:, i, :])
+        log_probs_buffer.log_()
+        log_probs_buffer.mul_(probs[:, i, :])
+        au = -log_probs_buffer.sum(dim=-1).mean().item()
+
+        mean_probs = probs[:, i, :].mean(dim=0)
+        log_probs_buffer[0].copy_(mean_probs)
+        log_probs_buffer[0].log_()
+        log_probs_buffer[0].mul_(mean_probs)
+        tu = -log_probs_buffer[0].sum().item()
+
+        eu = tu - au
+        
+        tus.append(tu)
+        aus.append(au)
+        eus.append(eu)
+    
+    return tus, aus, eus

@@ -45,7 +45,7 @@ from vllm.v1.utils import bind_kv_cache
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 
-from vllm.v1.worker.unc_evaluate import evaluate_uncertainty_all, SparseProbs
+from vllm.v1.worker.unc_evaluate import evaluate_uncertainty_all, SparseProbs, evaluate_uncertainty_all_mem_efficient
 
 if TYPE_CHECKING:
     import xgrammar as xgr
@@ -925,6 +925,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, torch.Tensor]:
+        # start_time = time.time()
         self._update_states(scheduler_output)
         if not scheduler_output.total_num_scheduled_tokens:
             # Return empty ModelRunnerOuptut if there's no work to do.
@@ -1087,6 +1088,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             spec_token_ids = self.generate_draft_token_ids(
                 valid_sampled_token_ids)
             
+        # print(f"Time taken for model execution: {time.time() - start_time:.2f}s")
+        # start_time = time.time()
+            
         if tfb_hidden_states is None: 
             # this indicates is a normal LLM generation, and we only needs 
             # to have a dummy uncertainty estimation. 
@@ -1110,26 +1114,28 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
             # # approximation of uncertainty estimation 
             # TUs, AUs, EUs = SparseProbs.from_dense_logits_top_p(reshaped_logits).evaluate_uncertainty_all()
+            TUs, AUs, EUs = evaluate_uncertainty_all_mem_efficient(reshaped_logits)
 
-            ###### Code you can use to compare the uncertainty estimation between full logits and sparse logits ######
-            TUs, AUs, EUs = evaluate_uncertainty_all(reshaped_logits)
-            # app_TUs, app_AUs, app_EUs = SparseLogits.from_dense_tensor(reshaped_logits).evaluate_uncertainty_all()
-            app_TUs, app_AUs, app_EUs = SparseProbs.from_dense_logits_top_p(reshaped_logits).evaluate_uncertainty_all()
+            # # ###### Code you can use to compare the uncertainty estimation between full logits and sparse logits ######
+            # TUs, AUs, EUs = evaluate_uncertainty_all(reshaped_logits)
+            # # # app_TUs, app_AUs, app_EUs = SparseLogits.from_dense_tensor(reshaped_logits).evaluate_uncertainty_all()
+            # # app_TUs, app_AUs, app_EUs = SparseProbs.from_dense_logits_top_p(reshaped_logits).evaluate_uncertainty_all()
+            # app_TUs, app_AUs, app_EUs = evaluate_uncertainty_all_mem_efficient(reshaped_logits)
 
-            print("========================================")
-            print(f"Total Uncertainty (full logits): {TUs}")
-            print(f"Approximate Total Uncertainty (sparse logits): {app_TUs}")
-            print(f"Aleatoric Uncertainty (full logits): {AUs}")
-            print(f"Approximate Aleatoric Uncertainty (sparse logits): {app_AUs}")
-            print(f"Epistemic Uncertainty (full logits): {EUs}")
-            print(f"Approximate Epistemic Uncertainty (sparse logits): {app_EUs}")
-            print("========================================")
+            # print("========================================")
+            # print(f"Total Uncertainty (full logits): {TUs}")
+            # print(f"Approximate Total Uncertainty (sparse logits): {app_TUs}")
+            # print(f"Aleatoric Uncertainty (full logits): {AUs}")
+            # print(f"Approximate Aleatoric Uncertainty (sparse logits): {app_AUs}")
+            # print(f"Epistemic Uncertainty (full logits): {EUs}")
+            # print(f"Approximate Epistemic Uncertainty (sparse logits): {app_EUs}")
+            # print("========================================")
 
-            print("========================================")
-            print(f"Average Percentage Error of Total Uncertainty: {np.mean(np.abs((np.array(TUs) - np.array(app_TUs)) / np.array(TUs)) * 100):.2f}%")
-            print(f"Average Percentage Error of Aleatoric Uncertainty: {np.mean(np.abs((np.array(AUs) - np.array(app_AUs)) / np.array(AUs)) * 100):.2f}%")
-            print(f"Average Percentage Error of Epistemic Uncertainty: {np.mean(np.abs((np.array(EUs) - np.array(app_EUs)) / np.array(EUs)) * 100):.2f}%")
-            print("========================================")
+            # print("========================================")
+            # print(f"Average Percentage Error of Total Uncertainty: {np.mean(np.abs((np.array(TUs) - np.array(app_TUs)) / np.array(TUs)) * 100):.2f}%")
+            # print(f"Average Percentage Error of Aleatoric Uncertainty: {np.mean(np.abs((np.array(AUs) - np.array(app_AUs)) / np.array(AUs)) * 100):.2f}%")
+            # print(f"Average Percentage Error of Epistemic Uncertainty: {np.mean(np.abs((np.array(EUs) - np.array(app_EUs)) / np.array(EUs)) * 100):.2f}%")
+            # print("========================================")
 
             uncertainties_lists = UncertaintyLists(
                 uncertainty_token_ids=valid_sampled_token_ids,
@@ -1138,6 +1144,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 epistemic_uncertainties=[[value] for value in EUs],
             )
             ################################################################################
+
+            # print(f"Time taken for uncertainty estimation: {time.time() - start_time:.2f}s")
             
         return ModelRunnerOutput(
             req_ids=self.input_batch.req_ids,

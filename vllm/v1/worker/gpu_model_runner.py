@@ -1007,8 +1007,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 # save for the later use of uncertainty estimation
                 tfb_hidden_states = hidden_states
 
-                # use the default hidden states w/o sampling for kv_cache and generation.
-                hidden_states = tfb_hidden_states[0]
+                if self.model_config.hf_config.use_tfb_for_generation:
+                    # if we use tfb for generation, 
+                    # we average the hidden states instead of the probability
+                    hidden_states = tfb_hidden_states.mean(dim=0)
+                else:
+                    # use the default hidden states w/o sampling for generation.
+                    hidden_states = tfb_hidden_states[0]
 
         if not get_pp_group().is_last_rank:
             # For mid-pipeline stages, return the hidden states.

@@ -28,6 +28,7 @@ class Uncertainty:
     total_uncertainty: float
     aleatoric_uncertainty: float
     epistemic_uncertainty: float
+    bayes_implicit_reward: float
     decoded_token: Optional[str] = None
 
 # {token_id -> uncertainty} for each sequence group.

@@ -104,6 +104,8 @@ class UncertaintyLists(NamedTuple):
     aleatoric_uncertainties: list[list[float]]
     # [num_reqs, max_num_logprobs + 1]
     epistemic_uncertainties: list[list[float]]
+    # [num_reqs, max_num_logprobs + 1]
+    bayes_implicit_rewards: list[list[float]]
 
     def slice(self, start: int, end: int):
         return UncertaintyLists(
@@ -111,6 +113,7 @@ class UncertaintyLists(NamedTuple):
             self.total_uncertainties[start:end],
             self.aleatoric_uncertainties[start:end],
             self.epistemic_uncertainties[start:end],
+            self.bayes_implicit_rewards[start:end],
         )
 
 @dataclass 

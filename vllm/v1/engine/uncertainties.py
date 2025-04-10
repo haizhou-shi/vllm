@@ -61,10 +61,11 @@ class UncertaintiesProcessor:
         """
 
         assert self.uncertainties is not None
-        token_ids_lst, total_uncertainties_lst, aleatoric_uncertainties_lst, epistemic_uncertainties_lst = uncertainties_lists
+        token_ids_lst, total_uncertainties_lst, aleatoric_uncertainties_lst, epistemic_uncertainties_lst, bayes_implicit_rewards_lst = uncertainties_lists
 
-        for tus, aus, eus, token_ids in zip(total_uncertainties_lst, aleatoric_uncertainties_lst, 
-                                            epistemic_uncertainties_lst, token_ids_lst):
+        for tus, aus, eus, birs, token_ids in zip(total_uncertainties_lst, aleatoric_uncertainties_lst, 
+                                                  epistemic_uncertainties_lst, bayes_implicit_rewards_lst,
+                                                  token_ids_lst):
 
             # Detokenize (non-incrementally).
             decoded_tokens = NONES if self.tokenizer is None else (
@@ -76,6 +77,7 @@ class UncertaintiesProcessor:
                     total_uncertainties=tus,
                     aleatoric_uncertainties=aus, 
                     epistemic_uncertainties=eus, 
+                    bayes_implicit_rewards=birs,
                     token_ids=token_ids,
                     decoded_tokens=decoded_tokens,
                 ))
@@ -85,6 +87,7 @@ class UncertaintiesProcessor:
         total_uncertainties: list[float],
         aleatoric_uncertainties: list[float],
         epistemic_uncertainties: list[float],
+        bayes_implicit_rewards: list[float],
         token_ids: list[int],
         decoded_tokens: Iterable[Optional[str]],
     ) -> dict[int, Uncertainty]:
@@ -107,12 +110,13 @@ class UncertaintiesProcessor:
                 total_uncertainty=tu,
                 aleatoric_uncertainty=au,
                 epistemic_uncertainty=eu,
+                bayes_implicit_reward=bir,
                 decoded_token=token,
             )
-            for token_id, tu, au, eu, token in zip(
+            for token_id, tu, au, eu, bir, token in zip(
                 token_ids, total_uncertainties, 
                 aleatoric_uncertainties, epistemic_uncertainties, 
-                decoded_tokens,
+                bayes_implicit_rewards, decoded_tokens,
             )
         }
 

@@ -664,15 +664,20 @@ def evaluate_uncertainty_all_mem_efficient(logits):
     # # starting 0s represent the tokens of the prompt.
     # birs = [0. for _ in range(len(tus) - r_lose.shape[0])] + \
     #     (r_win - r_lose).cpu().tolist()
-
+    # print("TUs: ", tus)
+    # print("AUs: ", aus)
+    # print("EUs: ", eus)
     return tus, aus, eus
 
 def evaluate_uncertainty_top_k(logits, topk=40):
-    # TODO: memory issue.
+
+    # print("Before top-k: ", logits.shape)
     _, indices = torch.topk(logits[0,:,:], k=topk, dim=-1, largest=True)
-    logits = logits[:,indices]
+    logits = torch.gather(logits, dim=-1, index=indices.unsqueeze(0).expand(logits.size(0), -1, -1))
+    # print("After top-k: ", logits.shape)
     # logits = torch.sort(logits, dim=-1, descending=True)[:,:,:topk]
     return evaluate_uncertainty_all_mem_efficient(logits=logits)
+    # return evaluate_uncertainty_all_cpu(logits=logits)
 
 
 def evaluate_uncertainty_all_cpu(logits):

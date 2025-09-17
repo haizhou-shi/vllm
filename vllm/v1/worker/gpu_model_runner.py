@@ -45,7 +45,7 @@ from vllm.v1.utils import bind_kv_cache
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 
-from vllm.v1.worker.unc_evaluate import evaluate_uncertainty_all_mem_efficient
+from vllm.v1.worker.unc_evaluate import evaluate_uncertainty_all_mem_efficient, evaluate_uncertainty_all_cpu, evaluate_uncertainty_top_k
 
 if TYPE_CHECKING:
     import xgrammar as xgr
@@ -1120,7 +1120,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # # approximation of uncertainty estimation 
             # Calculate the Bayesian Implicit Reward
             # TUs, AUs, EUs = SparseProbs.from_dense_logits_top_p(reshaped_logits).evaluate_uncertainty_all()
-            TUs, AUs, EUs, BIRs = evaluate_uncertainty_all_mem_efficient(reshaped_logits, token_ids=valid_sampled_token_ids, mode="default")
+            # TUs, AUs, EUs = evaluate_uncertainty_all_cpu(reshaped_logits, token_ids=valid_sampled_token_ids, mode="default")
+            # TUs, AUs, EUs, BIRs = evaluate_uncertainty_all_mem_efficient(reshaped_logits, token_ids=valid_sampled_token_ids, mode="default")
+            TUs, AUs, EUs = evaluate_uncertainty_top_k(reshaped_logits)
 
             # # ###### Code you can use to compare the uncertainty estimation between full logits and sparse logits ######
             # TUs, AUs, EUs = evaluate_uncertainty_all(reshaped_logits)
@@ -1129,12 +1131,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # app_TUs, app_AUs, app_EUs = evaluate_uncertainty_all_mem_efficient(reshaped_logits)
 
             # print("========================================")
-            # print(f"Total Uncertainty (full logits): {TUs}")
-            # print(f"Approximate Total Uncertainty (sparse logits): {app_TUs}")
-            # print(f"Aleatoric Uncertainty (full logits): {AUs}")
-            # print(f"Approximate Aleatoric Uncertainty (sparse logits): {app_AUs}")
-            # print(f"Epistemic Uncertainty (full logits): {EUs}")
-            # print(f"Approximate Epistemic Uncertainty (sparse logits): {app_EUs}")
+            # print(f"Total Uncertainty (cuda): {TUs}")
+            # print(f"Approximate Total Uncertainty (cpu): {TUs_cpu}")
+            # print(f"Aleatoric Uncertainty (cuda): {AUs}")
+            # print(f"Approximate Aleatoric Uncertainty (cpu): {AUs_cpu}")
+            # print(f"Epistemic Uncertainty (cuda): {EUs}")
+            # print(f"Approximate Epistemic Uncertainty (cpu): {EUs_cpu}")
             # print("========================================")
 
             # print("========================================")
@@ -1148,7 +1150,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 total_uncertainties=[[value] for value in TUs],
                 aleatoric_uncertainties=[[value] for value in AUs],
                 epistemic_uncertainties=[[value] for value in EUs],
-                bayes_implicit_rewards=[[value] for value in BIRs],
+                # bayes_implicit_rewards=[[value] for value in BIRs],
+                bayes_implicit_rewards=[[0.] for _ in AUs]
             )
             ################################################################################
 

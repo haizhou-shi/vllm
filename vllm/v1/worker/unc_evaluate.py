@@ -1,5 +1,6 @@
 import torch
 import math
+import numpy as np
 from torch.nn import functional as F
 from dataclasses import dataclass
 
@@ -582,7 +583,7 @@ def evaluate_uncertainty_all(logits):
     return tu.cpu().tolist(), au.cpu().tolist(), eu.cpu().tolist()
 
 
-def evaluate_uncertainty_all_mem_efficient(logits, token_ids, mode="default"):
+def evaluate_uncertainty_all_mem_efficient(logits):
     """
     Uncertainty evaluation for the logits.
     Args:
@@ -627,41 +628,74 @@ def evaluate_uncertainty_all_mem_efficient(logits, token_ids, mode="default"):
         aus.append(au)
         eus.append(eu)
 
-    ##########################################
-    # Bayesian Implicit Reward
-    ##########################################
-    tensor_token_ids = torch.tensor(
-        token_ids, device=probs.device).squeeze(-1)  # shape: [seq_len,]
-    # print("shape of token_ids: ", tensor_token_ids.shape)
-    # print("sampled token_ids: ", tensor_token_ids)
-    # print("shape of probs: ", probs.shape)
+    # ##########################################
+    # # Bayesian Implicit Reward
+    # ##########################################
+    # tensor_token_ids = torch.tensor(
+    #     token_ids, device=probs.device).squeeze(-1)  # shape: [seq_len,]
+    # # print("shape of token_ids: ", tensor_token_ids.shape)
+    # # print("sampled token_ids: ", tensor_token_ids)
+    # # print("shape of probs: ", probs.shape)
 
-    truncated_probs = probs[:, -tensor_token_ids.shape[0]:,]
-    # print("argmax of the logits: ", truncated_probs[0].argmax(dim=-1))
+    # truncated_probs = probs[:, -tensor_token_ids.shape[0]:,]
+    # # print("argmax of the logits: ", truncated_probs[0].argmax(dim=-1))
 
-    # get the log probs of the sampled tokens
-    # shape: [n_samples, seq_len]
-    sampled_probs = truncated_probs.gather(
-        dim=2,
-        index=tensor_token_ids.tile(truncated_probs.shape[0], 1).unsqueeze(-1),
-    ).squeeze(-1)
+    # # get the log probs of the sampled tokens
+    # # shape: [n_samples, seq_len]
+    # sampled_probs = truncated_probs.gather(
+    #     dim=2,
+    #     index=tensor_token_ids.tile(truncated_probs.shape[0], 1).unsqueeze(-1),
+    # ).squeeze(-1)
 
-    # compute the Bayesian Implicit Reward.
-    #   "default": E_theta[log(E_theta[P(y|x, theta)]) - log(P(y|x, theta))]
-    #   "best-vs-random": the first sample is the best sample without noise.
-    if mode == "default":
-        r_win = torch.log(sampled_probs.mean(dim=0))
-    elif mode == "best-vs-random":
-        r_win = torch.log(sampled_probs[0])
-    else:
-        raise ValueError(
-            f"Unknown mode for Bayesian Implicit Reward Estimation: {mode}.")
+    # # compute the Bayesian Implicit Reward.
+    # #   "default": E_theta[log(E_theta[P(y|x, theta)]) - log(P(y|x, theta))]
+    # #   "best-vs-random": the first sample is the best sample without noise.
+    # if mode == "default":
+    #     r_win = torch.log(sampled_probs.mean(dim=0))
+    # elif mode == "best-vs-random":
+    #     r_win = torch.log(sampled_probs[0])
+    # else:
+    #     raise ValueError(
+    #         f"Unknown mode for Bayesian Implicit Reward Estimation: {mode}.")
 
-    # r_lose is the average log probs of the sampled tokens.
-    r_lose = torch.log(sampled_probs).mean(dim=0)
+    # # r_lose is the average log probs of the sampled tokens.
+    # r_lose = torch.log(sampled_probs).mean(dim=0)
 
-    # starting 0s represent the tokens of the prompt.
-    birs = [0. for _ in range(len(tus) - r_lose.shape[0])] + \
-        (r_win - r_lose).cpu().tolist()
+    # # starting 0s represent the tokens of the prompt.
+    # birs = [0. for _ in range(len(tus) - r_lose.shape[0])] + \
+    #     (r_win - r_lose).cpu().tolist()
 
-    return tus, aus, eus, birs
+    return tus, aus, eus
+
+def evaluate_uncertainty_top_k(logits, topk=40):
+    # TODO: memory issue.
+    _, indices = torch.topk(logits[0,:,:], k=topk, dim=-1, largest=True)
+    logits = logits[:,indices]
+    # logits = torch.sort(logits, dim=-1, descending=True)[:,:,:topk]
+    return evaluate_uncertainty_all_mem_efficient(logits=logits)
+
+
+def evaluate_uncertainty_all_cpu(logits):
+    """
+    Uncertainty evaluation for the logits.
+    Args:
+        logits: [n_samples, seq_len, vocab_size]
+        token_ids: [seq_len, 1]
+    Returns: uncertainties of the shape: [seq_len]
+        TUs: total uncertainty, 
+            H(E_{\theta}[P(y|x, \theta)])
+        AUs: aleotoric uncertainty, 
+            E_{\theta}[H(P(y|x, \theta))]
+        EUs: epistemic uncertainty, 
+            TU - AU
+        BIRs: Bayesian Implicit Reward, 
+            E_{\theta}[log(E_{\theta}[P(y|x, \theta)]) - log(P(y|x, \theta))]
+    """
+    logits = logits.to(torch.float32).cpu().numpy()
+    logits -= np.max(logits, axis=-1, keepdims=True)
+    probs = np.exp(logits) / np.exp(logits).sum(axis=-1, keepdims=True)
+    mean_probs = probs.mean(axis=0)
+    tus = (-mean_probs * np.log(mean_probs)).sum(axis=-1)
+    aus = (-probs * np.log(probs)).sum(axis=-1).mean(axis=0)
+    eus = tus - aus
+    return list(tus), list(aus), list(eus)
